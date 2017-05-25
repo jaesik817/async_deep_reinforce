@@ -46,11 +46,17 @@ class A3CTrainingThread(object):
         aggregation_method=None,
         colocate_gradients_with_ops=False)
 
-    self.apply_gradients = grad_applier.apply_gradients(
-      global_network.get_vars(),
-      self.gradients )
-      
-    self.sync = self.local_network.sync_from(global_network)
+    if(global_network):
+      self.apply_gradients = grad_applier.apply_gradients(
+        global_network.get_vars(),
+        self.gradients )
+      self.sync = self.local_network.sync_from(global_network)
+      self.mode="threading";
+    else:
+      self.apply_gradients = grad_applier.apply_gradients(
+        self.local_network.get_vars(),
+        self.gradients )
+      self.mode="dist_tensor";
     
     self.game_state = GameState(113 * thread_index)
     
@@ -82,7 +88,10 @@ class A3CTrainingThread(object):
   def set_start_time(self, start_time):
     self.start_time = start_time
 
-  def process(self, sess, global_t, summary_writer, summary_op, score_input):
+  def get_episode_reward(self):
+    return self.episode_reward;
+
+  def process(self, sess, global_t, summary_writer, summary_op, score_input,score_ph="",score_ops=""):
     states = []
     actions = []
     rewards = []
@@ -91,7 +100,9 @@ class A3CTrainingThread(object):
     terminal_end = False
 
     # copy weights from shared to local
-    sess.run( self.sync )
+    # dist_tensor case not necessary
+    if not (self.mode=="dist_tensor"):
+      sess.run( self.sync )
 
     start_local_t = self.local_t
 
@@ -131,9 +142,11 @@ class A3CTrainingThread(object):
       if terminal:
         terminal_end = True
         print("score={}".format(self.episode_reward))
-
-        self._record_score(sess, summary_writer, summary_op, score_input,
-                           self.episode_reward, global_t)
+        if summary_writer:
+          self._record_score(sess, summary_writer, summary_op, score_input,
+                             self.episode_reward, global_t)
+        else:
+          sess.run(score_ops,{score_ph:self.episode_reward});
           
         self.episode_reward = 0
         self.game_state.reset()
